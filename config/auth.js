@@ -10,26 +10,27 @@ export const auth = betterAuth({
   baseURL: process.env.BETTER_AUTH_URL,
   secret: process.env.BETTER_AUTH_SECRET,
   trustedOrigins: [process.env.FRONTEND_URL],
-  emailAndPassword: {enabled: true, minPasswordLength: 8},
+  emailAndPassword: { enabled: true, minPasswordLength: 8 },
 
   user: {
-    modelName: 'users',
+    modelName: "users",
     additionalFields: {
-        role: {type: 'string', defaultValue: 'student', input: true},
-        plan: {type: 'string', defaultValue: 'free', input: false},
-        phone: {type: 'string', required: false, input: true},
-        bio: {type: 'string', required: false, input: true},
-    }
+      role: { type: "string", defaultValue: "student", input: true },
+      plan: { type: "string", defaultValue: "free", input: false },
+      phone: { type: "string", required: false, input: true },
+      bio: { type: "string", required: false, input: true },
+    },
   },
 
+  // Nobody can sign up as admin. Only student or tutor is allowed.
   databaseHooks: {
     user: {
-        create: {
-            before: async (user) => {
-                const role = user.role === 'tutor' ? 'tutor' : 'student';
-                return {data: {...user, role, plan: 'free'}}
-            }
-        }
-    }
-  }
+      create: {
+        before: async (user) => {
+          const role = user.role === "tutor" ? "tutor" : "student";
+          return { data: { ...user, role, plan: "free" } };
+        },
+      },
+    },
+  },
 });
