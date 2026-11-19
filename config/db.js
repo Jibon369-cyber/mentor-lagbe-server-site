@@ -29,9 +29,14 @@ export async function connectToMongoDB() {
   }
 }
 
-// The old code called connectToMongoDB() without awaiting it, so `db` was
-// created from a Promise (which has no .db method). Top-level await makes sure
-// `db` is a real Db instance by the time any route imports it.
+
 export const db = await connectToMongoDB();
+
+
+export const users = db.collection('users');
+export const tuitions = db.collection('tuitions');
+export const applications = db.collection('applications');
+export const payments = db.collection('payments');
+
 
 export default db;
