@@ -6,6 +6,7 @@ import {
   validateId,
   validateObjectId,
 } from "../middleware/validateId.js";
+import { createNotification } from "../services/notificationService.js";
 
 const router = Router();
 
@@ -77,7 +78,7 @@ router.post("/applications", async (req, res, next) => {
         .send({ message: "You already applied for this tuition" });
     }
 
-    await applications.insertOne({
+    const result = await applications.insertOne({
       tuitionId,
       tuitionTitle: tuition.title,
       subject: tuition.subject,
@@ -93,6 +94,30 @@ router.post("/applications", async (req, res, next) => {
       appliedAt: new Date(),
     });
 
+    await createNotification({
+      recipientId: req.dbUser._id.toString(),
+      recipientRole: "student",
+      title: "Application Submitted",
+      message: `Your application for "${tuition.title}" was submitted successfully.`,
+      actionUrl: `/dashboard/student/my-applications#application-${result.insertedId}`,
+      referenceId: result.insertedId.toString(),
+      referenceType: "application",
+    });
+
+    // Notify the tutor about new application
+    const tutor = await users.findOne({ email: tuition.tutorEmail });
+    if (tutor) {
+      await createNotification({
+        recipientId: tutor._id.toString(),
+        recipientRole: "tutor",
+        title: "New Application Received",
+        message: `${req.dbUser.name} applied for your tuition: "${tuition.title}"`,
+        actionUrl: `/dashboard/tutor/applicants#application-${result.insertedId}`,
+        referenceId: result.insertedId.toString(),
+        referenceType: "application",
+      });
+    }
+
     res.status(201).send({ message: "Application submitted" });
   } catch (error) {
     next(error);
@@ -101,16 +126,37 @@ router.post("/applications", async (req, res, next) => {
 
 router.delete("/applications/:id", validateId, async (req, res, next) => {
   try {
-    const result = await applications.deleteOne({
+    const filter = {
       _id: new ObjectId(req.params.id),
       studentEmail: req.dbUser.email,
       status: "pending",
-    });
+    };
+    const application = await applications.findOne(filter);
+    if (!application) {
+      return res
+        .status(400)
+        .send({ message: "Only pending applications can be cancelled" });
+    }
+
+    const result = await applications.deleteOne(filter);
 
     if (result.deletedCount === 0) {
       return res
         .status(400)
         .send({ message: "Only pending applications can be cancelled" });
+    }
+
+    const tutor = await users.findOne({ email: application.tutorEmail });
+    if (tutor) {
+      await createNotification({
+        recipientId: tutor._id.toString(),
+        recipientRole: "tutor",
+        title: "Application Cancelled",
+        message: `${req.dbUser.name} cancelled their application for "${application.tuitionTitle}".`,
+        actionUrl: "/dashboard/tutor/applicants",
+        referenceId: application._id.toString(),
+        referenceType: "application",
+      });
     }
 
     res.send({ message: "Application cancelled" });
@@ -165,6 +211,19 @@ router.post("/reviews", async (req, res, next) => {
         },
       },
     );
+
+    const tutor = await users.findOne({ email: application.tutorEmail });
+    if (tutor) {
+      await createNotification({
+        recipientId: tutor._id.toString(),
+        recipientRole: "tutor",
+        title: "New Student Review",
+        message: `${req.dbUser.name} left a ${numericRating}-star review for "${application.tuitionTitle}".`,
+        actionUrl: `/dashboard/tutor/my-tuitions#tuition-${application.tuitionId}`,
+        referenceId: application._id.toString(),
+        referenceType: "application",
+      });
+    }
 
     res.send({ message: "Thank you for your review" });
   } catch (error) {

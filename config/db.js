@@ -37,6 +37,7 @@ export const users = db.collection('users');
 export const tuitions = db.collection('tuitions');
 export const applications = db.collection('applications');
 export const payments = db.collection('payments');
+export const notifications = db.collection('notifications');
 
 
 export default db;

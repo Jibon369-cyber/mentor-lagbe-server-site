@@ -1,6 +1,7 @@
 import { mongodbAdapter } from "@better-auth/mongo-adapter";
 import { betterAuth } from "better-auth";
 import db from "./db.js";
+import { notifyAdmins } from "../services/notificationService.js";
 import "dotenv/config";
 
 const frontendOrigins = (process.env.FRONTEND_URL || "http://localhost:3000")
@@ -66,6 +67,17 @@ export const auth = betterAuth({
             typeof user.role === "string" ? user.role.toLowerCase() : "";
           const role = requestedRole === "tutor" ? "tutor" : "student";
           return { data: { ...user, role, plan: "free" } };
+        },
+        after: async (user) => {
+          // Notify all admins about new user signup
+          await notifyAdmins({
+            recipientRole: "admin",
+            title: "New User Signed Up",
+            message: `${user.name} (${user.email}) signed up as ${user.role}`,
+            actionUrl: `/dashboard/admin/users#user-${user.id}`,
+            referenceId: user.id,
+            referenceType: "user",
+          });
         },
       },
     },

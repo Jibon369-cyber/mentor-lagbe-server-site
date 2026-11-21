@@ -3,6 +3,7 @@ import { ObjectId } from "mongodb";
 import { applications, tuitions, users } from "../config/db.js";
 import { verifyToken, verifyTutor } from "../middleware/auth.js";
 import { validateId } from "../middleware/validateId.js";
+import { createNotification, notifyAdmins } from "../services/notificationService.js";
 
 const router = Router();
 
@@ -104,14 +105,24 @@ router.post("/tuitions", async (req, res, next) => {
       ...data,
       tutorName: req.dbUser.name,
       tutorEmail: req.dbUser.email,
-      approvalStatus: "pending",
+      approvalStatus: "approved",
       isActive: true,
       createdAt: new Date(),
       updatedAt: new Date(),
     });
 
+    // Notify all admins about new tuition post
+    await notifyAdmins({
+      recipientRole: "admin",
+      title: "New Tuition Posted",
+      message: `${req.dbUser.name} posted a new tuition: "${data.title}"`,
+      actionUrl: `/dashboard/admin/tuitions#tuition-${result.insertedId}`,
+      referenceId: result.insertedId.toString(),
+      referenceType: "tuition",
+    });
+
     res.status(201).send({
-      message: "Tuition posted, waiting for admin approval",
+      message: "Tuition posted successfully",
       id: result.insertedId,
     });
   } catch (error) {
@@ -156,6 +167,15 @@ router.patch("/tuitions/:id", validateId, async (req, res, next) => {
     if (result.matchedCount === 0) {
       return res.status(404).send({ message: "Tuition not found" });
     }
+
+    await notifyAdmins({
+      recipientRole: "admin",
+      title: "Tuition Updated",
+      message: `${req.dbUser.name} updated the tuition: "${data.title}"`,
+      actionUrl: `/dashboard/admin/tuitions#tuition-${req.params.id}`,
+      referenceId: req.params.id,
+      referenceType: "tuition",
+    });
 
     res.send({ message: "Tuition updated and sent for re-approval" });
   } catch (error) {
@@ -235,13 +255,31 @@ router.patch("/applications/:id", validateId, async (req, res, next) => {
         .send({ message: "Status must be accepted or rejected" });
     }
 
-    const result = await applications.updateOne(
+    const application = await applications.findOne(
       { _id: new ObjectId(req.params.id), tutorEmail: req.dbUser.email },
+    );
+    if (!application) {
+      return res.status(404).send({ message: "Application not found" });
+    }
+
+    await applications.updateOne(
+      { _id: application._id },
       { $set: { status, updatedAt: new Date() } },
     );
 
-    if (result.matchedCount === 0) {
-      return res.status(404).send({ message: "Application not found" });
+    if (application.status !== status) {
+      const student = await users.findOne({ email: application.studentEmail });
+      if (student) {
+        await createNotification({
+          recipientId: student._id.toString(),
+          recipientRole: "student",
+          title: `Application ${status}`,
+          message: `Your application for "${application.tuitionTitle}" was ${status} by ${req.dbUser.name}.`,
+          actionUrl: `/dashboard/student/my-applications#application-${application._id}`,
+          referenceId: application._id.toString(),
+          referenceType: "application",
+        });
+      }
     }
 
     res.send({ message: `Application ${status}` });
