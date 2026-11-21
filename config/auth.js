@@ -34,19 +34,16 @@ export const auth = betterAuth({
     minPasswordLength: 8,
   },
 
-  // Google sign-in. The provider is only registered when both credentials
-  // exist, so local development still works without OAuth keys.
-  ...(googleConfigured
-    ? {
-        socialProviders: {
-          google: {
-            clientId: process.env.GOOGLE_CLIENT_ID,
-            clientSecret: process.env.GOOGLE_CLIENT_SECRET,
-            prompt: "select_account",
-          },
-        },
-      }
-    : {}),
+  // Always register Google so Better Auth recognizes the provider. Set both
+  // GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET in the server environment to
+  // complete the OAuth flow.
+  socialProviders: {
+    google: {
+      clientId: process.env.GOOGLE_CLIENT_ID || "",
+      clientSecret: process.env.GOOGLE_CLIENT_SECRET || "",
+      prompt: "select_account",
+    },
+  },
 
   user: {
     modelName: "users",
