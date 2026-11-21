@@ -1,5 +1,5 @@
 import { Router } from "express";
-import { tuitions, users } from "../config/db";
+import { tuitions, users } from "../config/db.js";
 
 
 const router = Router();

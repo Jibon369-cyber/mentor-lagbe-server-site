@@ -1,6 +1,6 @@
 import { Router } from "express";
-import { tuitions, users } from "../config/db";
-import { validateId } from "../middleware/validateId";
+import { tuitions, users } from "../config/db.js";
+import { validateId } from "../middleware/validateId.js";
 import { ObjectId } from "mongodb";
 
 
