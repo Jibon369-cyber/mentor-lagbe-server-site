@@ -1,17 +1,34 @@
 import { Router } from "express";
-import { tuitions, users } from "../config/db.js";
-
+import { applications, tuitions, users } from "../config/db.js";
 
 const router = Router();
 
-router.get('/', async (req, res) => {
-    const tutors = await users.coutDocuments({role: 'tutor'})
+router.get("/", async (req, res, next) => {
+  try {
+    const [
+      tutors,
+      students,
+      totalUsers,
+      approvedTuitions,
+      totalReviews,
+    ] = await Promise.all([
+      users.countDocuments({ role: "tutor" }),
+      users.countDocuments({ role: "student" }),
+      users.countDocuments(),
+      tuitions.countDocuments({ approvalStatus: "approved", isActive: true }),
+      applications.countDocuments({ rating: { $gte: 1 } }),
+    ]);
 
-    const students = await users.coutDocuments({ role: "student" });
-
-    const approvedTuitions = await tuitions.coutDocuments({approvalStatus: 'approved'})
-
-    res.send({tutors, students, approvedTuitions})
-})
+    res.send({
+      tutors,
+      students,
+      totalUsers,
+      approvedTuitions,
+      totalReviews,
+    });
+  } catch (error) {
+    next(error);
+  }
+});
 
 export default router;

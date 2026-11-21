@@ -1,69 +1,211 @@
 import { Router } from "express";
-import { tuitions, users } from "../config/db.js";
-import { validateId } from "../middleware/validateId.js";
 import { ObjectId } from "mongodb";
-
+import { applications, tuitions, users } from "../config/db.js";
+import { validateId } from "../middleware/validateId.js";
 
 const router = Router();
 
-const publicFilter = {approvalStatus: 'approved', isActive: true}
+const publicFilter = { approvalStatus: "approved", isActive: true };
 
-router.get('/', async (req, res) => {
-    const {search, subject, classLevel, mode} = req.query;
+function escapeRegex(value) {
+  return String(value).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
 
-    const page = Number(req.query.page) || 1
+/**
+ * Adds `rating: { average, count }` to a list of tuition documents.
+ * Reviews are stored on accepted applications, so the 4-collection
+ * database design is preserved.
+ */
+async function attachRatings(list) {
+  if (!list.length) return list;
 
-    const limit = Number(req.query.limit) || 9
+  const ids = list.map((tuition) => tuition._id.toString());
+  const stats = await applications
+    .aggregate([
+      { $match: { tuitionId: { $in: ids }, rating: { $gte: 1, $lte: 5 } } },
+      {
+        $group: {
+          _id: "$tuitionId",
+          average: { $avg: "$rating" },
+          count: { $sum: 1 },
+        },
+      },
+    ])
+    .toArray();
 
-    const query = {...publicFilter}
+  const byTuition = new Map(stats.map((item) => [item._id, item]));
+
+  return list.map((tuition) => {
+    const item = byTuition.get(tuition._id.toString());
+    return {
+      ...tuition,
+      rating: {
+        average: item ? Math.round(item.average * 10) / 10 : 0,
+        count: item?.count ?? 0,
+      },
+    };
+  });
+}
+
+// GET /api/tuitions?search=&subject=&classLevel=&mode=&page=&limit=
+router.get("/", async (req, res, next) => {
+  try {
+    const { search, subject, classLevel, mode } = req.query;
+    const page = Math.max(1, Number(req.query.page) || 1);
+    const limit = Math.min(24, Math.max(1, Number(req.query.limit) || 9));
+
+    const conditions = [{ ...publicFilter }];
 
     if (search) {
-        const text = search.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-
-        query.$or = [
-            {title: {$regex: text, $options: 'i'}},
-            {subject: {$regex: text, $options: 'i'}},
-        ]
+      const text = escapeRegex(search.trim());
+      conditions.push({
+        $or: [
+          { title: { $regex: text, $options: "i" } },
+          { subject: { $regex: text, $options: "i" } },
+          { tutorName: { $regex: text, $options: "i" } },
+        ],
+      });
     }
 
-    if (subject) query.subject = subject
+    if (subject) {
+      conditions.push({ subject: { $regex: `^${escapeRegex(subject)}$`, $options: "i" } });
+    }
+    if (classLevel) {
+      conditions.push({
+        classLevel: { $regex: `^${escapeRegex(classLevel)}$`, $options: "i" },
+      });
+    }
+    if (mode) {
+      conditions.push({ mode: { $regex: `^${escapeRegex(mode)}$`, $options: "i" } });
+    }
 
-    if (classLevel) query.classLevel = classLevel
+    const query = { $and: conditions };
 
-    if (mode) query.mode = mode
-
-    const total = await tuitions.countDocuments(query)
-
+    const total = await tuitions.countDocuments(query);
     const data = await tuitions
-    .find(query)
-    .sort({createdAt: -1})
-    .skip((page - 1) * limit)
-    .limit(limit)
-    .toArray()
+      .find(query)
+      .sort({ createdAt: -1 })
+      .skip((page - 1) * limit)
+      .limit(limit)
+      .toArray();
 
-    res.send({tuitions: data, total, page, totalPages: Math.ceil(total / limit)})
-})
+    res.send({
+      tuitions: await attachRatings(data),
+      total,
+      page,
+      totalPages: Math.ceil(total / limit),
+      limit,
+    });
+  } catch (error) {
+    next(error);
+  }
+});
 
-router.get('/letest', async (req, res) => {
-    const data = await tuitions.find(publicFilter).sort({createdAt: -1}).limit(6).toArray()
+// GET /api/tuitions/latest - 6 newest approved & active tuitions for the home page
+router.get("/latest", async (req, res, next) => {
+  try {
+    const data = await tuitions
+      .find(publicFilter)
+      .sort({ createdAt: -1 })
+      .limit(6)
+      .toArray();
 
-    res.send(data)
-})
+    res.send(await attachRatings(data));
+  } catch (error) {
+    next(error);
+  }
+});
 
-router.get('/:id', validateId, async (req, res) => {
-    const tuition = await tuition.findOne({
-        _id: new ObjectId(req.params.id),
-        approvalStatus: 'approved',
-    })
+// GET /api/tuitions/reviews/featured - real student feedback for the home page
+router.get("/reviews/featured", async (req, res, next) => {
+  try {
+    const reviews = await applications
+      .find(
+        {
+          rating: { $gte: 4, $lte: 5 },
+          feedback: { $nin: ["", null] },
+        },
+        {
+          projection: {
+            studentName: 1,
+            tuitionTitle: 1,
+            subject: 1,
+            rating: 1,
+            feedback: 1,
+            reviewedAt: 1,
+          },
+        },
+      )
+      .sort({ reviewedAt: -1 })
+      .limit(6)
+      .toArray();
 
-    if (!tuition) return res.status(404).send({message: 'Tuition not found'})
+    res.send(reviews);
+  } catch (error) {
+    next(error);
+  }
+});
 
-    const tutor = await users.findOne(
-        {email: tuition.tutorEmail},
-        {projection: {name: 1, image: 1, bio: 1, plan: 1, email: 1}}
-    )
+// GET /api/tuitions/:id
+router.get("/:id", validateId, async (req, res, next) => {
+  try {
+    const tuition = await tuitions.findOne({
+      _id: new ObjectId(req.params.id),
+      approvalStatus: "approved",
+    });
 
-    res.send({...tuition, tutor})
-})
+    if (!tuition) {
+      return res.status(404).send({ message: "Tuition not found" });
+    }
+
+    const [tutor, reviews] = await Promise.all([
+      users.findOne(
+        { email: tuition.tutorEmail },
+        {
+          projection: {
+            name: 1,
+            image: 1,
+            bio: 1,
+            plan: 1,
+            email: 1,
+            phone: 1,
+          },
+        },
+      ),
+      applications
+        .find(
+          { tuitionId: req.params.id, rating: { $gte: 1, $lte: 5 } },
+          {
+            projection: {
+              studentName: 1,
+              rating: 1,
+              feedback: 1,
+              reviewedAt: 1,
+            },
+          },
+        )
+        .sort({ reviewedAt: -1 })
+        .toArray(),
+    ]);
+
+    const average =
+      reviews.length > 0
+        ? Math.round(
+            (reviews.reduce((sum, review) => sum + review.rating, 0) /
+              reviews.length) *
+              10,
+          ) / 10
+        : 0;
+
+    res.send({
+      ...tuition,
+      tutor,
+      reviews,
+      rating: { average, count: reviews.length },
+    });
+  } catch (error) {
+    next(error);
+  }
+});
 
 export default router;
